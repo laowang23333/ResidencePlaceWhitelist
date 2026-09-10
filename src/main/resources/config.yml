@@ -1,0 +1,7 @@
+# 白名单物品列表（填写 Material 枚举名，全大写）
+# 示例：STONE、OAK_LOG、DIRT、TORCH 等
+whitelist:
+  - STONE
+  - OAK_LOG
+  - DIRT
+  - TORCH
