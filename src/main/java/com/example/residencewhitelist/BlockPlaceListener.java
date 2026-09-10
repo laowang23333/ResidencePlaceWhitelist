@@ -23,7 +23,8 @@ import java.util.Set;
 public class BlockPlaceListener implements Listener {
 
     private final ResidencePlaceWhitelist plugin;
-    private final Set<Material> whitelist = new HashSet<>();
+    // 【修改】白名单改为字符串集合，不再强依赖 Material
+    private final Set<String> whitelist = new HashSet<>();
 
     public BlockPlaceListener(ResidencePlaceWhitelist plugin) {
         this.plugin = plugin;
@@ -34,12 +35,8 @@ public class BlockPlaceListener implements Listener {
         whitelist.clear();
         List<String> list = plugin.getConfig().getStringList("whitelist");
         for (String entry : list) {
-            Material mat = Material.matchMaterial(entry);
-            if (mat != null) {
-                whitelist.add(mat);
-            } else {
-                plugin.getLogger().warning("未知物品: " + entry);
-            }
+            // 直接添加，不做 Material 转换，支持 "netcraft:block_wood_t3_crystal" 这种格式
+            whitelist.add(entry.toUpperCase());
         }
         plugin.getLogger().info("已加载 " + whitelist.size() + " 个白名单物品。");
     }
@@ -60,21 +57,24 @@ public class BlockPlaceListener implements Listener {
 
         Location loc = block.getLocation();
 
-        // 主动检查：玩家在领地内且没有 build 权限
         if (!isPlayerInResidenceWithoutPermission(player, loc, "build")) {
-            return; // 不在领地内，或者有权限，不需要我们管
+            return;
         }
 
-        Material placedType = block.getType();
+        // 【修改】获取方块的 Bukkit 名称（如 STONE）和 NMS 真实ID（如 netcraft:block_wood_t3_crystal）
+        String bukkitName = block.getType().name();
+        String nmsId = getNMSBlockId(block);
 
-        // 白名单物品，强行允许放置
-        if (whitelist.contains(placedType)) {
+        boolean isWhitelisted = whitelist.contains(bukkitName) 
+                || (nmsId != null && whitelist.contains(nmsId.toUpperCase()))
+                || whitelist.contains("MODDED"); // 终极兜底：如果写了 MODDED，放行所有模组方块
+
+        if (isWhitelisted) {
             if (event.isCancelled()) {
                 event.setCancelled(false);
-                player.sendMessage(ChatColor.GREEN + "[RPW] 你放置了白名单物品: " + placedType.name());
+                player.sendMessage(ChatColor.GREEN + "[RPW] 你放置了白名单物品: " + (nmsId != null ? nmsId : bukkitName));
             }
         } else {
-            // 非白名单物品，强行阻止（双保险）
             if (!event.isCancelled()) {
                 event.setCancelled(true);
                 player.sendMessage(ChatColor.RED + "You don't have place permissions here.");
@@ -95,12 +95,10 @@ public class BlockPlaceListener implements Listener {
 
         Location loc = block.getLocation();
 
-        // 主动检查：玩家在领地内且没有 container 权限
         if (!isPlayerInResidenceWithoutPermission(player, loc, "container")) {
-            return; // 有权限，正常打开
+            return;
         }
 
-        // 如果没有权限，强行拦截
         if (!event.isCancelled()) {
             event.setCancelled(true);
             player.sendMessage(ChatColor.RED + "You don't have container permissions here.");
@@ -108,44 +106,44 @@ public class BlockPlaceListener implements Listener {
     }
 
     /**
-     * 通过遍历领地列表，主动检查玩家是否在领地内且没有指定权限
+     * 【新增】反射获取 Mod 方块的 NMS 注册名（例如 netcraft:block_wood_t3_crystal）
      */
+    private String getNMSBlockId(Block block) {
+        try {
+            // 尝试方法1：CraftBlock 的 getNMS
+            Object nmsBlock = block.getClass().getMethod("getNMS").invoke(block);
+            
+            // 尝试方法2：通过 Forge 注册表获取键名
+            Class<?> forgeRegistryClass = Class.forName("net.minecraftforge.registries.ForgeRegistries");
+            Object blockRegistry = forgeRegistryClass.getField("BLOCKS").get(null);
+            Object key = blockRegistry.getClass().getMethod("getKey", Object.class).invoke(blockRegistry, nmsBlock);
+            
+            return key != null ? key.toString() : null;
+        } catch (Throwable t) {
+            return null; // 获取失败，安全返回 null
+        }
+    }
+
     private boolean isPlayerInResidenceWithoutPermission(Player player, Location loc, String permission) {
         try {
             Plugin resPlugin = Bukkit.getPluginManager().getPlugin("Residence");
             if (resPlugin == null || !resPlugin.isEnabled()) return false;
 
-            Object resManager = resPlugin.getClass()
-                    .getMethod("getResidenceManager")
-                    .invoke(resPlugin);
-
-            Object residencesObj = resManager.getClass()
-                    .getMethod("getResidences")
-                    .invoke(resManager);
+            Object resManager = resPlugin.getClass().getMethod("getResidenceManager").invoke(resPlugin);
+            Object residencesObj = resManager.getClass().getMethod("getResidences").invoke(resManager);
 
             if (residencesObj instanceof Map) {
                 Map<?, ?> residences = (Map<?, ?>) residencesObj;
                 for (Object resObj : residences.values()) {
-                    Boolean contains = (Boolean) resObj.getClass()
-                            .getMethod("containsLoc", Location.class)
-                            .invoke(resObj, loc);
-
+                    Boolean contains = (Boolean) resObj.getClass().getMethod("containsLoc", Location.class).invoke(resObj, loc);
                     if (contains != null && contains) {
-                        Object perms = resObj.getClass()
-                                .getMethod("getPermissions")
-                                .invoke(resObj);
-                        
-                        // 【关键修改】最后一个参数改为 false，表示玩家如果没明确设置权限，就默认是没权限
-                        Boolean hasPerm = (Boolean) perms.getClass()
-                                .getMethod("playerHas", String.class, String.class, boolean.class)
-                                .invoke(perms, player.getName(), permission, false);
-                        
-                        return !(hasPerm != null && hasPerm); // 如果没有权限则返回 true
+                        Object perms = resObj.getClass().getMethod("getPermissions").invoke(resObj);
+                        Boolean hasPerm = (Boolean) perms.getClass().getMethod("playerHas", String.class, String.class, boolean.class).invoke(perms, player.getName(), permission, false);
+                        return !(hasPerm != null && hasPerm);
                     }
                 }
             }
         } catch (Throwable t) {
-            // 如果遍历出错，强制认定为无权限，触发拦截保护
             return true; 
         }
         return false; 
