@@ -5,3 +5,9 @@ api-version: '1.20'
 author: YourName
 description: 允许无领地权限的玩家在领地内放置白名单物品
 softdepend: [Residence]
+commands:
+  rpw:
+    description: 重载 ResidencePlaceWhitelist 的白名单
+    usage: /rpw reload
+    permission: rpw.admin
+    permission-message: 你没有权限使用此指令。
