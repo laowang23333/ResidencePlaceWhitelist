@@ -1,23 +1,18 @@
 package com.example.residencewhitelist;
 
-import org.bukkit.Bukkit;
 import org.bukkit.ChatColor;
-import org.bukkit.Location;
 import org.bukkit.block.Block;
-import org.bukkit.block.Container;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
-import org.bukkit.event.block.Action;
 import org.bukkit.event.block.BlockBreakEvent;
 import org.bukkit.event.block.BlockPlaceEvent;
-import org.bukkit.event.player.PlayerInteractEvent;
-import org.bukkit.plugin.Plugin;
+import org.bukkit.inventory.ItemStack;
+import org.bukkit.inventory.meta.ItemMeta;
 
 import java.util.HashSet;
 import java.util.List;
-import java.util.Map;
 import java.util.Set;
 
 public class BlockPlaceListener implements Listener {
@@ -35,13 +30,11 @@ public class BlockPlaceListener implements Listener {
         whitelistPlace.clear();
         whitelistBreak.clear();
 
-        // 加载放置白名单
         List<String> placeList = plugin.getConfig().getStringList("whitelist-place");
         for (String entry : placeList) {
             whitelistPlace.add(entry.toUpperCase());
         }
 
-        // 加载挖掘白名单
         List<String> breakList = plugin.getConfig().getStringList("whitelist-break");
         for (String entry : breakList) {
             whitelistBreak.add(entry.toUpperCase());
@@ -59,105 +52,92 @@ public class BlockPlaceListener implements Listener {
     // ==================== 监听方块放置 ====================
     @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = false)
     public void onBlockPlace(BlockPlaceEvent event) {
+        if (!event.isCancelled()) return;
+
         Player player = event.getPlayer();
         if (player == null) return;
-
         Block block = event.getBlockPlaced();
         if (block == null) return;
-
-        Location loc = block.getLocation();
-
-        if (!isPlayerInResidenceWithoutPermission(player, loc, "build")) {
-            return;
-        }
 
         String bukkitName = block.getType().name();
         String nmsId = getNMSBlockId(block);
 
-        // 【新增】调试日志：打印方块的真实 Bukkit 名称和 NMS ID
-        plugin.getLogger().info("玩家放置方块，Bukkit名称: " + bukkitName + " | NMS_ID: " + nmsId);
-
-        boolean isWhitelisted = whitelistPlace.contains(bukkitName)
-                || (nmsId != null && whitelistPlace.contains(nmsId.toUpperCase()))
-                || whitelistPlace.contains("MODDED");
-
-        if (isWhitelisted) {
-            if (event.isCancelled()) {
-                event.setCancelled(false);
-                player.sendMessage(ChatColor.GREEN + "[RPW] 你放置了白名单物品: " + (nmsId != null ? nmsId : bukkitName));
-            }
-        } else {
-            if (!event.isCancelled()) {
-                event.setCancelled(true);
-                player.sendMessage(ChatColor.RED + "You don't have place permissions here.");
-            }
+        if (isWhitelisted(whitelistPlace, bukkitName, nmsId)) {
+            event.setCancelled(false);
+            // 【修改】显示物品中文名（拿不到就回退到 NMS ID / Bukkit 名）
+            String friendlyName = getFriendlyName(block);
+            player.sendMessage(ChatColor.GREEN + "[RPW] 你放置了白名单物品: " + friendlyName);
         }
     }
 
     // ==================== 监听方块挖掘 ====================
     @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = false)
     public void onBlockBreak(BlockBreakEvent event) {
+        if (!event.isCancelled()) return;
+
         Player player = event.getPlayer();
         if (player == null) return;
-
         Block block = event.getBlock();
         if (block == null) return;
-
-        Location loc = block.getLocation();
-
-        if (!isPlayerInResidenceWithoutPermission(player, loc, "destroy")) {
-            return;
-        }
 
         String bukkitName = block.getType().name();
         String nmsId = getNMSBlockId(block);
 
-        // 【新增】调试日志：打印方块的真实 Bukkit 名称和 NMS ID
-        plugin.getLogger().info("玩家挖掘方块，Bukkit名称: " + bukkitName + " | NMS_ID: " + nmsId);
-
-        boolean isWhitelisted = whitelistBreak.contains(bukkitName)
-                || (nmsId != null && whitelistBreak.contains(nmsId.toUpperCase()))
-                || whitelistBreak.contains("MODDED");
-
-        if (isWhitelisted) {
-            if (event.isCancelled()) {
-                event.setCancelled(false);
-                player.sendMessage(ChatColor.GREEN + "[RPW] 你挖掘了白名单物品: " + (nmsId != null ? nmsId : bukkitName));
-            }
-        } else {
-            if (!event.isCancelled()) {
-                event.setCancelled(true);
-                player.sendMessage(ChatColor.RED + "You don't have destroy permissions here.");
-            }
+        if (isWhitelisted(whitelistBreak, bukkitName, nmsId)) {
+            event.setCancelled(false);
+            // 【修改】挖掘不再发任何提示
         }
     }
 
-    // ==================== 监听打开容器 ====================
-    @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = false)
-    public void onPlayerInteract(PlayerInteractEvent event) {
-        if (event.getAction() != Action.RIGHT_CLICK_BLOCK) return;
-
-        Player player = event.getPlayer();
-        Block block = event.getClickedBlock();
-        if (block == null) return;
-
-        if (!(block.getState() instanceof Container)) return;
-
-        Location loc = block.getLocation();
-
-        if (!isPlayerInResidenceWithoutPermission(player, loc, "container")) {
-            return;
-        }
-
-        if (!event.isCancelled()) {
-            event.setCancelled(true);
-            player.sendMessage(ChatColor.RED + "You don't have container permissions here.");
-        }
+    // ==================== 白名单匹配 ====================
+    private boolean isWhitelisted(Set<String> list, String bukkitName, String nmsId) {
+        return list.contains(bukkitName)
+                || (nmsId != null && list.contains(nmsId.toUpperCase()))
+                || list.contains("MODDED");
     }
 
+    // ==================== 获取物品中文名 ====================
     /**
-     * 反射获取 Mod 方块的 NMS 注册名（例如 netcraft:block_wood_t3_crystal）
+     * 尝试获取方块对应的物品中文名。
+     * 优先顺序：ItemStack 的 I18N 名称 -> ItemMeta 的显示名 -> NMS ID -> Bukkit 名称
      */
+    private String getFriendlyName(Block block) {
+        try {
+            ItemStack item = new ItemStack(block.getType());
+            if (item.getType().isAir()) {
+                // ItemStack 构造失败（模组方块在混合端常见），回退
+                String nms = getNMSBlockId(block);
+                return nms != null ? nms : block.getType().name();
+            }
+
+            // 尝试 Paper/Spigot 的 I18N 名称
+            try {
+                java.lang.reflect.Method method = ItemStack.class.getMethod("getI18NDisplayName");
+                Object result = method.invoke(item);
+                if (result instanceof String && !((String) result).isEmpty()) {
+                    return (String) result;
+                }
+            } catch (Throwable ignored) {}
+
+            // 尝试 ItemMeta 的 display name
+            try {
+                if (item.hasItemMeta()) {
+                    ItemMeta meta = item.getItemMeta();
+                    if (meta != null && meta.hasDisplayName()) {
+                        return meta.getDisplayName();
+                    }
+                }
+            } catch (Throwable ignored) {}
+
+            // 最后回退
+            String nms = getNMSBlockId(block);
+            return nms != null ? nms : block.getType().name();
+        } catch (Throwable t) {
+            return block.getType().name();
+        }
+    }
+
+    // ==================== Mod 方块 NMS ID ====================
     private String getNMSBlockId(Block block) {
         try {
             Object nmsBlock = block.getClass().getMethod("getNMS").invoke(block);
@@ -168,30 +148,5 @@ public class BlockPlaceListener implements Listener {
         } catch (Throwable t) {
             return null;
         }
-    }
-
-    private boolean isPlayerInResidenceWithoutPermission(Player player, Location loc, String permission) {
-        try {
-            Plugin resPlugin = Bukkit.getPluginManager().getPlugin("Residence");
-            if (resPlugin == null || !resPlugin.isEnabled()) return false;
-
-            Object resManager = resPlugin.getClass().getMethod("getResidenceManager").invoke(resPlugin);
-            Object residencesObj = resManager.getClass().getMethod("getResidences").invoke(resManager);
-
-            if (residencesObj instanceof Map) {
-                Map<?, ?> residences = (Map<?, ?>) residencesObj;
-                for (Object resObj : residences.values()) {
-                    Boolean contains = (Boolean) resObj.getClass().getMethod("containsLoc", Location.class).invoke(resObj, loc);
-                    if (contains != null && contains) {
-                        Object perms = resObj.getClass().getMethod("getPermissions").invoke(resObj);
-                        Boolean hasPerm = (Boolean) perms.getClass().getMethod("playerHas", String.class, String.class, boolean.class).invoke(perms, player.getName(), permission, false);
-                        return !(hasPerm != null && hasPerm);
-                    }
-                }
-            }
-        } catch (Throwable t) {
-            return true;
-        }
-        return false;
     }
 }
