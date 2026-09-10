@@ -74,6 +74,9 @@ public class BlockPlaceListener implements Listener {
         String bukkitName = block.getType().name();
         String nmsId = getNMSBlockId(block);
 
+        // 【新增】调试日志：打印方块的真实 Bukkit 名称和 NMS ID
+        plugin.getLogger().info("玩家放置方块，Bukkit名称: " + bukkitName + " | NMS_ID: " + nmsId);
+
         boolean isWhitelisted = whitelistPlace.contains(bukkitName)
                 || (nmsId != null && whitelistPlace.contains(nmsId.toUpperCase()))
                 || whitelistPlace.contains("MODDED");
@@ -108,6 +111,9 @@ public class BlockPlaceListener implements Listener {
 
         String bukkitName = block.getType().name();
         String nmsId = getNMSBlockId(block);
+
+        // 【新增】调试日志：打印方块的真实 Bukkit 名称和 NMS ID
+        plugin.getLogger().info("玩家挖掘方块，Bukkit名称: " + bukkitName + " | NMS_ID: " + nmsId);
 
         boolean isWhitelisted = whitelistBreak.contains(bukkitName)
                 || (nmsId != null && whitelistBreak.contains(nmsId.toUpperCase()))
